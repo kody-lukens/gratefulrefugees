@@ -1,0 +1,9 @@
+C:\Users\kodyl\OneDrive\Desktop\Rimworld Mods\GratefulRefugees\Source\GratefulRefugees\obj\Release\net472\GratefulRefugees.csproj.AssemblyReference.cache
+C:\Users\kodyl\OneDrive\Desktop\Rimworld Mods\GratefulRefugees\Source\GratefulRefugees\obj\Release\net472\GratefulRefugees.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\kodyl\OneDrive\Desktop\Rimworld Mods\GratefulRefugees\Source\GratefulRefugees\obj\Release\net472\GratefulRefugees.AssemblyInfoInputs.cache
+C:\Users\kodyl\OneDrive\Desktop\Rimworld Mods\GratefulRefugees\Source\GratefulRefugees\obj\Release\net472\GratefulRefugees.AssemblyInfo.cs
+C:\Users\kodyl\OneDrive\Desktop\Rimworld Mods\GratefulRefugees\Source\GratefulRefugees\obj\Release\net472\GratefulRefugees.csproj.CoreCompileInputs.cache
+C:\Users\kodyl\OneDrive\Desktop\Rimworld Mods\GratefulRefugees\Assemblies\net472\GratefulRefugees.dll
+C:\Users\kodyl\OneDrive\Desktop\Rimworld Mods\GratefulRefugees\Assemblies\net472\GratefulRefugees.pdb
+C:\Users\kodyl\OneDrive\Desktop\Rimworld Mods\GratefulRefugees\Source\GratefulRefugees\obj\Release\net472\GratefulRefugees.dll
+C:\Users\kodyl\OneDrive\Desktop\Rimworld Mods\GratefulRefugees\Source\GratefulRefugees\obj\Release\net472\GratefulRefugees.pdb
