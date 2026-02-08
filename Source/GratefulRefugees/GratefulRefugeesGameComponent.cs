@@ -20,6 +20,12 @@ namespace GratefulRefugees
       if (Scribe.mode == LoadSaveMode.PostLoadInit)
       {
         appliedKeySet = appliedKeys != null ? new HashSet<string>(appliedKeys) : new HashSet<string>();
+        GratefulRefugeesDebug.Log("Loaded appliedKeys count=" + appliedKeySet.Count);
+      }
+      else if (Scribe.mode == LoadSaveMode.Saving)
+      {
+        var count = appliedKeys != null ? appliedKeys.Count : 0;
+        GratefulRefugeesDebug.Log("Saving appliedKeys count=" + count);
       }
     }
 
@@ -27,6 +33,7 @@ namespace GratefulRefugees
     {
       base.FinalizeInit();
       appliedKeySet = appliedKeys != null ? new HashSet<string>(appliedKeys) : new HashSet<string>();
+      GratefulRefugeesDebug.Log("FinalizeInit appliedKeys count=" + appliedKeySet.Count);
     }
 
     public override void GameComponentTick()
@@ -63,12 +70,14 @@ namespace GratefulRefugees
       var key = pawnId + ":" + questId;
       if (appliedKeySet.Contains(key))
       {
+        GratefulRefugeesDebug.Log("AlreadyApplied pawnId=" + pawnId + " questId=" + questId);
         return false;
       }
 
       appliedKeySet.Add(key);
       appliedKeys ??= new List<string>();
       appliedKeys.Add(key);
+      GratefulRefugeesDebug.Log("MarkApplied pawnId=" + pawnId + " questId=" + questId);
       return true;
     }
   }
