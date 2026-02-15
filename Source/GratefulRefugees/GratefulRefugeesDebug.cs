@@ -9,8 +9,12 @@ namespace GratefulRefugees
 {
   public static class GratefulRefugeesDebug
   {
-    public static bool VerboseLogging = true;
+    public static bool EnableLogging = false;
+    public static bool VerboseLogging = false;
+    public static bool DevSummaryOnMapLoad = false;
+    public static bool DevActionsEnabled = false;
     private const string Prefix = "[GratefulRefugees] ";
+    private static readonly HashSet<int> OnceKeys = new HashSet<int>();
 
     public static void Log(string message)
     {
@@ -24,7 +28,96 @@ namespace GratefulRefugees
 
     public static void LogMessage(string message)
     {
+      if (!EnableLogging)
+      {
+        return;
+      }
+
       Verse.Log.Message(Prefix + message);
+    }
+
+    public static void LogStartup(string message)
+    {
+      LogMessage(message);
+    }
+
+    public static void LogVerbose(string message)
+    {
+      if (!EnableLogging)
+      {
+        return;
+      }
+
+      Log(message);
+    }
+
+    public static void LogOnce(string message, int key)
+    {
+      if (!EnableLogging)
+      {
+        return;
+      }
+
+      if (OnceKeys.Contains(key))
+      {
+        return;
+      }
+
+      OnceKeys.Add(key);
+      Verse.Log.Message(Prefix + message);
+    }
+
+    public static void LogCandidate(Pawn pawn, string mapLabel, string faction, string guestFlags, string questInfo, string source)
+    {
+      var pawnId = pawn != null ? pawn.thingIDNumber : -1;
+      var key = Gen.HashCombineInt(pawnId, "candidate".GetHashCode());
+      LogOnce("Candidate: pawn=" + (pawn != null ? pawn.LabelShortCap : "<null>")
+        + " id=" + pawnId
+        + " map=" + mapLabel
+        + " faction=" + faction
+        + " guest=" + guestFlags
+        + " quest=" + questInfo
+        + " source=" + source, key);
+    }
+
+    public static void LogNotCandidate(Pawn pawn, string reason, string source)
+    {
+      var pawnId = pawn != null ? pawn.thingIDNumber : -1;
+      var key = Gen.HashCombineInt(pawnId, Gen.HashCombineInt("notcandidate".GetHashCode(), reason.GetHashCode()));
+      LogOnce("Not candidate: pawn=" + (pawn != null ? pawn.LabelShortCap : "<null>")
+        + " id=" + pawnId
+        + " reason=" + reason
+        + " source=" + source, key);
+    }
+
+    public static void LogApplyAttempt(Pawn pawn, string source)
+    {
+      if (!VerboseLogging)
+      {
+        return;
+      }
+
+      Log("Apply attempt: pawn=" + (pawn != null ? pawn.LabelShortCap : "<null>")
+        + " id=" + (pawn != null ? pawn.thingIDNumber.ToString() : "null")
+        + " source=" + source);
+    }
+
+    public static void LogApplySuccess(Pawn pawn, ThoughtDef thoughtDef)
+    {
+      var pawnId = pawn != null ? pawn.thingIDNumber : -1;
+      var key = Gen.HashCombineInt(pawnId, "applysuccess".GetHashCode());
+      LogOnce("Applied TakenIn memory: pawn=" + (pawn != null ? pawn.LabelShortCap : "<null>")
+        + " id=" + pawnId
+        + " thought=" + (thoughtDef != null ? thoughtDef.defName : "<null>"), key);
+    }
+
+    public static void LogApplyFailure(Pawn pawn, string reason)
+    {
+      var pawnId = pawn != null ? pawn.thingIDNumber : -1;
+      var key = Gen.HashCombineInt(pawnId, Gen.HashCombineInt("applyfail".GetHashCode(), reason.GetHashCode()));
+      LogOnce("Failed apply: pawn=" + (pawn != null ? pawn.LabelShortCap : "<null>")
+        + " id=" + pawnId
+        + " reason=" + reason, key);
     }
 
     public static void LogQuestDefDiscovery()

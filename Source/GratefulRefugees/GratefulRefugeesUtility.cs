@@ -12,9 +12,11 @@ namespace GratefulRefugees
   {
     private const string RefugeeQuestDefName = "Hospitality_Refugee";
     private const string TakenInThoughtDefName = "GratefulRefugees_TakenIn";
+    private const string InitialOptimismDefName = "NewColonyOptimism";
 
     private static MethodInfo questFromThingMethod;
     private static MethodInfo questFromTagMethod;
+    private static MethodInfo isQuestLodgerMethod;
     private static FieldInfo questTagsField;
     private static PropertyInfo questTagsProperty;
     private static FieldInfo questScriptDefField;
@@ -24,114 +26,441 @@ namespace GratefulRefugees
 
     public static void TryApplyTakenIn(Pawn pawn, GuestStatus? guestStatusFromPatch, Faction hostFactionFromPatch, string source)
     {
-      GratefulRefugeesDebug.Log("Apply attempt: " + (pawn != null ? pawn.LabelShortCap : "<null>") + " (" + (pawn != null ? pawn.thingIDNumber.ToString() : "null") + ") source=" + source);
+      GratefulRefugeesDebug.LogApplyAttempt(pawn, source);
 
-      if (pawn == null || pawn.Dead || !pawn.Spawned || pawn.Map == null)
+      if (!PassesBasicPawnChecks(pawn, out var basicFailure))
       {
-        if (pawn == null)
-        {
-          GratefulRefugeesDebug.Log("Skip: pawn is null");
-        }
-        else if (pawn.Dead)
-        {
-          GratefulRefugeesDebug.Log("Skip: pawn is dead");
-        }
-        else if (!pawn.Spawned || pawn.Map == null)
-        {
-          GratefulRefugeesDebug.Log("Skip: not spawned / not on map");
-        }
-        return;
-      }
-
-      if (!pawn.RaceProps.Humanlike)
-      {
-        GratefulRefugeesDebug.Log("Skip: not humanlike");
-        return;
-      }
-
-      if (pawn.IsColonist || pawn.IsColonistPlayerControlled)
-      {
-        GratefulRefugeesDebug.Log("Skip: pawn is colonist");
-        return;
-      }
-
-      if (IsPrisonerOrSlave(pawn))
-      {
-        GratefulRefugeesDebug.Log("Skip: pawn is prisoner / slave");
-        return;
-      }
-
-      var guestStatus = guestStatusFromPatch ?? pawn.guest?.GuestStatus;
-      if (guestStatus != GuestStatus.Guest)
-      {
-        GratefulRefugeesDebug.Log("Skip: pawn is not guest / not temporarily joined (status=" + (guestStatus?.ToString() ?? "<null>") + ")");
-        return;
-      }
-
-      var hostFaction = hostFactionFromPatch ?? pawn.guest?.HostFaction;
-      if (hostFaction != Faction.OfPlayer)
-      {
-        GratefulRefugeesDebug.Log("Skip: pawn is hostile / faction not appropriate (hostFaction=" + (hostFaction != null ? hostFaction.Name : "<null>") + ")");
+        GratefulRefugeesDebug.LogNotCandidate(pawn, basicFailure, source);
         return;
       }
 
       var quest = TryGetQuestFromPawn(pawn);
-      if (!IsHospitalityRefugeeQuest(quest))
+      TryApplyTakenInWithQuest(pawn, quest, guestStatusFromPatch, hostFactionFromPatch, source);
+    }
+
+    public static void TryApplyTakenInWithQuest(Pawn pawn, Quest quest, GuestStatus? guestStatusFromPatch, Faction hostFactionFromPatch, string source)
+    {
+      if (pawn == null)
       {
-        GratefulRefugeesDebug.Log("Skip: quest mismatch (expected=" + RefugeeQuestDefName + " actual=" + (GetQuestScriptDef(quest)?.defName ?? "<null>") + ")");
+        GratefulRefugeesDebug.LogApplyFailure(pawn, "pawn is null");
+        return;
+      }
+
+      if (!PassesBasicPawnChecks(pawn, out var basicFailure))
+      {
+        GratefulRefugeesDebug.LogNotCandidate(pawn, basicFailure, source);
+        return;
+      }
+
+      if (!PassesLodgerChecks(pawn, guestStatusFromPatch, hostFactionFromPatch, out var lodgerFailure))
+      {
+        GratefulRefugeesDebug.LogNotCandidate(pawn, lodgerFailure, source);
+        return;
+      }
+
+      if (!PassesQuestAssociationChecks(pawn, quest, out var questAssocFailure))
+      {
+        GratefulRefugeesDebug.LogNotCandidate(pawn, questAssocFailure, source);
         return;
       }
 
       var component = Current.Game?.GetComponent<GratefulRefugeesGameComponent>();
       if (component == null)
       {
-        GratefulRefugeesDebug.Log("Failed: game component missing");
+        GratefulRefugeesDebug.LogApplyFailure(pawn, "game component missing");
         return;
       }
 
-      var questId = GetQuestId(quest);
-      if (!component.TryMarkApplied(pawn.thingIDNumber, questId))
-      {
-        GratefulRefugeesDebug.Log("Skip: already applied via our tracking dictionary");
-        return;
-      }
-
-      var thoughtDef = DefDatabase<ThoughtDef>.GetNamedSilentFail(TakenInThoughtDefName);
+      var thoughtDef = GetConfiguredThoughtDef();
       if (thoughtDef == null)
       {
-        GratefulRefugeesDebug.Log("Failed: missing thought def " + TakenInThoughtDefName);
+        GratefulRefugeesDebug.LogApplyFailure(pawn, "missing thought def");
         return;
       }
 
       var memories = pawn.needs?.mood?.thoughts?.memories;
       if (memories == null)
       {
-        GratefulRefugeesDebug.Log("Failed: pawn has no needs/mood or cannot receive memories");
+        GratefulRefugeesDebug.LogApplyFailure(pawn, "no mood need or memories");
+        return;
+      }
+
+      LogCandidateIfNeeded(pawn, quest, guestStatusFromPatch, hostFactionFromPatch, source);
+
+      var questId = GetQuestId(quest);
+      if (!component.TryMarkApplied(pawn.thingIDNumber, questId))
+      {
+        GratefulRefugeesDebug.LogApplyFailure(pawn, "already applied");
         return;
       }
 
       if (memories.GetFirstMemoryOfDef(thoughtDef) != null)
       {
-        GratefulRefugeesDebug.Log("Skip: thought already present");
+        GratefulRefugeesDebug.LogApplyFailure(pawn, "thought already present");
         return;
       }
 
       memories.TryGainMemory(thoughtDef);
-      GratefulRefugeesDebug.Log("Applied TakenIn thought to " + pawn.LabelShortCap + " (" + pawn.thingIDNumber + ") moodOffset=30 durationTicks=" + thoughtDef.DurationTicks);
+      QueueSettlingInIfNeeded(pawn, thoughtDef);
+      GratefulRefugeesDebug.LogApplySuccess(pawn, thoughtDef);
     }
 
-    private static bool IsHospitalityRefugeeQuest(Quest quest)
+    private static bool PassesBasicPawnChecks(Pawn pawn, out string failureReason)
     {
-      var questDef = GetQuestScriptDef(quest);
-      if (questDef == null)
+      failureReason = null;
+      if (pawn == null || pawn.Dead || !pawn.Spawned || pawn.Map == null)
       {
-        GratefulRefugeesDebug.Log("Quest identification: questDef is null");
+        if (pawn == null)
+        {
+          failureReason = "pawn is null";
+        }
+        else if (pawn.Dead)
+        {
+          failureReason = "pawn is dead";
+        }
+        else if (!pawn.Spawned || pawn.Map == null)
+        {
+          failureReason = "not spawned / not on map";
+        }
+        return false;
       }
-      else
+
+      if (!pawn.RaceProps.Humanlike)
       {
-        GratefulRefugeesDebug.Log("Quest identification: questDef=" + questDef.defName + " label=" + (questDef.label ?? "<null>") + " rootType=" + questDef.root?.GetType().FullName);
+        failureReason = "not humanlike";
+        return false;
       }
-      return questDef != null && questDef.defName == RefugeeQuestDefName;
+
+      if (IsPrisonerOrSlave(pawn))
+      {
+        failureReason = "prisoner/slave";
+        return false;
+      }
+
+      return true;
+    }
+
+    private static bool PassesLodgerChecks(Pawn pawn, GuestStatus? guestStatusFromPatch, Faction hostFactionFromPatch, out string failureReason)
+    {
+      failureReason = null;
+      if (!IsTemporaryQuestLodger(pawn, guestStatusFromPatch, hostFactionFromPatch, out var lodgerReason))
+      {
+        failureReason = lodgerReason ?? "not temporary quest lodger/guest";
+        return false;
+      }
+      return true;
+    }
+
+    private static bool IsTemporaryQuestLodger(Pawn pawn, GuestStatus? guestStatusFromPatch, Faction hostFactionFromPatch, out string failureReason)
+    {
+      failureReason = null;
+      if (pawn == null)
+      {
+        failureReason = "pawn is null";
+        return false;
+      }
+
+      if (TryGetBool(pawn, "IsQuestLodger"))
+      {
+        GratefulRefugeesDebug.LogVerbose("Lodger check: pawn.IsQuestLodger=true");
+        return true;
+      }
+
+      if (TryGetBool(pawn.guest, "IsQuestLodger"))
+      {
+        GratefulRefugeesDebug.LogVerbose("Lodger check: pawn.guest.IsQuestLodger=true");
+        return true;
+      }
+
+      var guestStatus = guestStatusFromPatch ?? pawn.guest?.GuestStatus;
+      if (guestStatus == GuestStatus.Guest)
+      {
+        GratefulRefugeesDebug.LogVerbose("Lodger check: GuestStatus=Guest");
+        return true;
+      }
+
+      var hostFaction = hostFactionFromPatch ?? pawn.guest?.HostFaction;
+      if (hostFaction == Faction.OfPlayer)
+      {
+        GratefulRefugeesDebug.LogVerbose("Lodger check: hostFaction=player");
+        return true;
+      }
+
+      var questUtilityType = AccessTools.TypeByName("RimWorld.QuestUtility");
+      if (questUtilityType != null)
+      {
+        isQuestLodgerMethod ??= questUtilityType
+          .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+          .FirstOrDefault(m =>
+            m.ReturnType == typeof(bool) &&
+            m.Name.IndexOf("IsQuestLodger", StringComparison.OrdinalIgnoreCase) >= 0 &&
+            m.GetParameters().Length == 1 &&
+            m.GetParameters()[0].ParameterType == typeof(Pawn));
+
+        if (isQuestLodgerMethod != null)
+        {
+          try
+          {
+            var result = (bool)isQuestLodgerMethod.Invoke(null, new object[] { pawn });
+            GratefulRefugeesDebug.LogVerbose("Lodger check: QuestUtility." + isQuestLodgerMethod.Name + "=" + result);
+            return result;
+          }
+          catch
+          {
+            GratefulRefugeesDebug.LogVerbose("Lodger check: QuestUtility.IsQuestLodger invocation failed");
+          }
+        }
+      }
+
+      failureReason = "lodger check failed (guestStatus=" + (guestStatus?.ToString() ?? "<null>") + " hostFaction=" + (hostFaction != null ? hostFaction.Name : "<null>") + ")";
+      return false;
+    }
+
+    public static void AddPending(Pawn pawn, Quest quest, string source)
+    {
+      if (pawn == null)
+      {
+        GratefulRefugeesDebug.LogVerbose("Pending add skipped: pawn is null");
+        return;
+      }
+
+      var component = Current.Game?.GetComponent<GratefulRefugeesGameComponent>();
+      if (component == null)
+      {
+        GratefulRefugeesDebug.LogApplyFailure(pawn, "game component missing");
+        return;
+      }
+
+      var questId = GetQuestId(quest);
+      component.AddPending(pawn.thingIDNumber, questId);
+      GratefulRefugeesDebug.LogVerbose("Pending added: pawn=" + pawn.LabelShortCap + " id=" + pawn.thingIDNumber + " questId=" + questId + " source=" + source);
+    }
+
+    public static void TryApplyPendingIfReady(Pawn pawn, string source)
+    {
+      if (pawn == null)
+      {
+        GratefulRefugeesDebug.LogApplyFailure(pawn, "pawn is null");
+        return;
+      }
+
+      var component = Current.Game?.GetComponent<GratefulRefugeesGameComponent>();
+      if (component == null)
+      {
+        GratefulRefugeesDebug.LogApplyFailure(pawn, "game component missing");
+        return;
+      }
+
+      if (!component.IsPending(pawn.thingIDNumber))
+      {
+        return;
+      }
+
+      if (!pawn.Spawned || pawn.Map == null)
+      {
+        GratefulRefugeesDebug.LogNotCandidate(pawn, "not spawned / not on map", source);
+        return;
+      }
+
+      var quest = TryGetQuestFromPawn(pawn);
+      TryApplyTakenInWithQuest(pawn, quest, null, null, source);
+
+      var thoughtDef = GetConfiguredThoughtDef();
+      if (thoughtDef != null)
+      {
+        var memories = pawn.needs?.mood?.thoughts?.memories;
+        var hasMemory = memories != null && memories.GetFirstMemoryOfDef(thoughtDef) != null;
+        if (hasMemory)
+        {
+          component.RemovePending(pawn.thingIDNumber);
+        }
+      }
+    }
+
+    public static bool IsGratefulRefugeeCandidate(Pawn pawn, Quest quest, GuestStatus? guestStatusFromPatch, Faction hostFactionFromPatch, out string reason)
+    {
+      reason = null;
+      if (!PassesBasicPawnChecks(pawn, out var basicFailure))
+      {
+        reason = basicFailure;
+        return false;
+      }
+
+      if (!PassesLodgerChecks(pawn, guestStatusFromPatch, hostFactionFromPatch, out var lodgerFailure))
+      {
+        reason = lodgerFailure;
+        return false;
+      }
+
+      if (!PassesQuestAssociationChecks(pawn, quest, out var questAssocFailure))
+      {
+        reason = questAssocFailure;
+        return false;
+      }
+
+      if (pawn.needs?.mood?.thoughts?.memories == null)
+      {
+        reason = "no mood need";
+        return false;
+      }
+
+      return true;
+    }
+
+    private static bool PassesQuestAssociationChecks(Pawn pawn, Quest quest, out string failureReason)
+    {
+      failureReason = null;
+      if (pawn == null)
+      {
+        failureReason = "pawn is null";
+        return false;
+      }
+
+      var hasQuest = quest != null;
+      var tags = GetQuestTags(pawn);
+      var hasTags = tags != null && tags.Count > 0;
+      var isQuestLodger = TryGetBool(pawn, "IsQuestLodger") || TryGetBool(pawn.guest, "IsQuestLodger");
+
+      if (hasQuest || hasTags || isQuestLodger)
+      {
+        return true;
+      }
+
+      failureReason = "not quest associated";
+      return false;
+    }
+
+    public static void LogMapCandidateSummary(Map map)
+    {
+      if (map == null)
+      {
+        return;
+      }
+
+      var key = Gen.HashCombineInt(map.Index, "candidateSummary".GetHashCode());
+      var pawns = map.mapPawns?.AllPawnsSpawned ?? new List<Pawn>();
+      var lines = new List<string>();
+      foreach (var pawn in pawns)
+      {
+        var quest = TryGetQuestFromPawn(pawn);
+        if (IsGratefulRefugeeCandidate(pawn, quest, null, null, out var reason))
+        {
+          var thoughtDef = DefDatabase<ThoughtDef>.GetNamedSilentFail(TakenInThoughtDefName);
+          var memories = pawn.needs?.mood?.thoughts?.memories;
+          var hasMemory = thoughtDef != null && memories != null && memories.GetFirstMemoryOfDef(thoughtDef) != null;
+          lines.Add("candidate pawn=" + pawn.LabelShortCap + " id=" + pawn.thingIDNumber + " hasMemory=" + hasMemory);
+        }
+      }
+
+      var mapLabel = map.Parent != null ? map.Parent.LabelCap : "Map " + map.Index;
+      var summary = "[Summary] " + mapLabel + " candidates=" + lines.Count;
+      if (lines.Count > 0)
+      {
+        summary += " | " + string.Join("; ", lines);
+      }
+
+      GratefulRefugeesDebug.LogOnce(summary, key);
+    }
+
+    public static void TryHandleDecayQueue(GratefulRefugeesGameComponent component)
+    {
+      var settings = GratefulRefugeesMod.Settings;
+      if (settings == null || settings.useInitialOptimism || !settings.decayTakenIn)
+      {
+        return;
+      }
+
+      if (component == null)
+      {
+        return;
+      }
+
+      var settlingDef = DefDatabase<ThoughtDef>.GetNamedSilentFail("GratefulRefugees_SettlingIn");
+      if (settlingDef == null)
+      {
+        return;
+      }
+
+      var pawnIds = new List<int>();
+      var ticks = new List<int>();
+      component.GetDecayEntries(pawnIds, ticks);
+      if (pawnIds.Count == 0)
+      {
+        return;
+      }
+
+      var currentTick = Find.TickManager?.TicksGame ?? 0;
+      var pawnsById = new Dictionary<int, Pawn>();
+      foreach (var map in Find.Maps)
+      {
+        if (map?.mapPawns == null)
+        {
+          continue;
+        }
+
+        foreach (var pawn in map.mapPawns.AllPawnsSpawned)
+        {
+          pawnsById[pawn.thingIDNumber] = pawn;
+        }
+      }
+
+      for (var i = pawnIds.Count - 1; i >= 0; i--)
+      {
+        if (ticks[i] > currentTick)
+        {
+          continue;
+        }
+
+        var pawnId = pawnIds[i];
+        if (!pawnsById.TryGetValue(pawnId, out var pawn))
+        {
+          component.ClearDecay(pawnId);
+          continue;
+        }
+
+        var memories = pawn.needs?.mood?.thoughts?.memories;
+        if (memories == null)
+        {
+          component.ClearDecay(pawnId);
+          continue;
+        }
+
+        if (memories.GetFirstMemoryOfDef(settlingDef) == null)
+        {
+          memories.TryGainMemory(settlingDef);
+        }
+
+        component.ClearDecay(pawnId);
+      }
+    }
+
+    private static void QueueSettlingInIfNeeded(Pawn pawn, ThoughtDef appliedDef)
+    {
+      var settings = GratefulRefugeesMod.Settings;
+      if (settings == null || settings.useInitialOptimism || !settings.decayTakenIn)
+      {
+        return;
+      }
+
+      if (appliedDef == null || appliedDef.defName != TakenInThoughtDefName)
+      {
+        return;
+      }
+
+      var component = Current.Game?.GetComponent<GratefulRefugeesGameComponent>();
+      if (component == null)
+      {
+        return;
+      }
+
+      var tickNow = Find.TickManager?.TicksGame ?? 0;
+      var durationTicks = appliedDef.DurationTicks;
+      if (durationTicks <= 0)
+      {
+        return;
+      }
+
+      component.SetDecay(pawn.thingIDNumber, tickNow + durationTicks);
     }
 
     private static QuestScriptDef GetQuestScriptDef(Quest quest)
@@ -177,12 +506,17 @@ namespace GratefulRefugees
       return quest.GetHashCode();
     }
 
+    public static Quest TryGetQuestFromPawnPublic(Pawn pawn)
+    {
+      return TryGetQuestFromPawn(pawn);
+    }
+
     private static Quest TryGetQuestFromPawn(Pawn pawn)
     {
       var questUtilityType = AccessTools.TypeByName("RimWorld.QuestUtility");
       if (questUtilityType == null)
       {
-        GratefulRefugeesDebug.Log("QuestUtility type not found");
+        GratefulRefugeesDebug.LogVerbose("QuestUtility type not found");
         return null;
       }
 
@@ -198,7 +532,7 @@ namespace GratefulRefugees
       {
         try
         {
-          GratefulRefugeesDebug.Log("Quest lookup via method: " + questFromThingMethod.Name);
+          GratefulRefugeesDebug.LogVerbose("Quest lookup via method: " + questFromThingMethod.Name);
           return questFromThingMethod.Invoke(null, new object[] { pawn }) as Quest;
         }
         catch
@@ -210,11 +544,11 @@ namespace GratefulRefugees
       var tags = GetQuestTags(pawn);
       if (tags == null || tags.Count == 0)
       {
-        GratefulRefugeesDebug.Log("Quest tags not found on pawn");
+        GratefulRefugeesDebug.LogVerbose("Quest tags not found on pawn");
         return null;
       }
 
-      GratefulRefugeesDebug.Log("Quest tags found: " + string.Join(", ", tags));
+      GratefulRefugeesDebug.LogVerbose("Quest tags found: " + string.Join(", ", tags));
 
       questFromTagMethod ??= questUtilityType
         .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
@@ -232,7 +566,7 @@ namespace GratefulRefugees
       {
         try
         {
-          GratefulRefugeesDebug.Log("Quest lookup via tag: " + tags[i]);
+          GratefulRefugeesDebug.LogVerbose("Quest lookup via tag: " + tags[i]);
           var quest = questFromTagMethod.Invoke(null, new object[] { tags[i] }) as Quest;
           if (quest != null)
           {
@@ -296,6 +630,51 @@ namespace GratefulRefugees
       }
 
       return false;
+    }
+
+    private static void LogCandidateIfNeeded(Pawn pawn, Quest quest, GuestStatus? guestStatusFromPatch, Faction hostFactionFromPatch, string source)
+    {
+      if (pawn == null)
+      {
+        return;
+      }
+
+      var mapLabel = pawn.Map?.Parent != null ? pawn.Map.Parent.LabelCap : (pawn.Map != null ? "Map " + pawn.Map.Index : "<no map>");
+      var faction = pawn.Faction != null ? pawn.Faction.Name : "<null>";
+      var guestFlags = GetGuestFlags(pawn, guestStatusFromPatch, hostFactionFromPatch);
+      var questInfo = GetQuestInfo(pawn, quest);
+      GratefulRefugeesDebug.LogCandidate(pawn, mapLabel, faction, guestFlags, questInfo, source);
+    }
+
+    private static string GetQuestInfo(Pawn pawn, Quest quest)
+    {
+      var questDef = GetQuestScriptDef(quest);
+      var questId = GetQuestId(quest);
+      var tags = GetQuestTags(pawn);
+      var tagsText = tags != null && tags.Count > 0 ? string.Join("|", tags) : "<no tags>";
+      return (questDef != null ? questDef.defName : "<null>") + " id=" + questId + " tags=" + tagsText;
+    }
+
+    private static string GetGuestFlags(Pawn pawn, GuestStatus? guestStatusFromPatch, Faction hostFactionFromPatch)
+    {
+      var guestStatus = guestStatusFromPatch ?? pawn.guest?.GuestStatus;
+      var isQuestLodger = TryGetBool(pawn, "IsQuestLodger") || TryGetBool(pawn.guest, "IsQuestLodger");
+      var hostFaction = hostFactionFromPatch ?? pawn.guest?.HostFaction;
+      var hostFactionName = hostFaction != null ? hostFaction.Name : "<null>";
+      return "status=" + (guestStatus?.ToString() ?? "<null>")
+        + " questLodger=" + isQuestLodger
+        + " hostFaction=" + hostFactionName;
+    }
+
+    private static ThoughtDef GetConfiguredThoughtDef()
+    {
+      var settings = GratefulRefugeesMod.Settings;
+      if (settings != null && settings.useInitialOptimism)
+      {
+        return DefDatabase<ThoughtDef>.GetNamedSilentFail(InitialOptimismDefName);
+      }
+
+      return DefDatabase<ThoughtDef>.GetNamedSilentFail(TakenInThoughtDefName);
     }
   }
 }

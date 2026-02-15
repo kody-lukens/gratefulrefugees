@@ -2,13 +2,26 @@
 <Defs>
   <ThoughtDef>
     <defName>GratefulRefugees_TakenIn</defName>
-    <durationDays>8</durationDays>
+    <durationDays>30</durationDays>
     <stackLimit>1</stackLimit>
     <stages>
       <li>
         <label>Taken in!</label>
         <description>These people gave me shelter when I needed it.</description>
         <baseMoodEffect>30</baseMoodEffect>
+      </li>
+    </stages>
+  </ThoughtDef>
+
+  <ThoughtDef>
+    <defName>GratefulRefugees_SettlingIn</defName>
+    <durationDays>5</durationDays>
+    <stackLimit>1</stackLimit>
+    <stages>
+      <li>
+        <label>Settling in</label>
+        <description>I'm getting settled here.</description>
+        <baseMoodEffect>15</baseMoodEffect>
       </li>
     </stages>
   </ThoughtDef>
